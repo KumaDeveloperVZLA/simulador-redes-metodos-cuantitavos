@@ -1,0 +1,52 @@
+==================================================
+           REPORTE DE SIMULACIÓN DE RED           
+==================================================
+Tiempo Total de Simulación: 117.3 s
+Tasa de Llegada (lambda): 5.0 paquetes/s
+Tasa de Servicio (mu): 18.0 paquetes/s
+Capacidad de Buffer (S): 50 paquetes
+Umbral Reabastecimiento (s): 10 paquetes
+--------------------------------------------------
+METRICAS OBTENIDAS:
+Paquetes Procesados: 2820
+Paquetes Perdidos (Overflow): 2481
+Tasa de Pérdida: 46.79%
+Tiempo Medio en Cola (Wq): 2.17 s
+Promedio Paquetes en Sistema (L): 55.75
+Costo Total de Almacenamiento: $306.26
+Costo Total de Penalización (Ruptura): $24810.00
+--------------------------------------------------
+Costo Global del Sistema: $25116.26
+==================================================
+
+==================================================
+        DIAGNÓSTICO AUTOMATIZADO VÍA API          
+==================================================
+ANÁLISIS DE RENDIMIENTO Y CONCLUSIONES CUANTITATIVAS:
+1. Evaluación de Pérdida de Paquetes: CRÍTICO (Severa saturación por desbordamiento de buffer, penalizaciones de costo excesivas).
+   - Se registraron 2481 paquetes descartados por desbordamiento de buffer (tasa de pérdida: 46.79%).
+   - El costo por penalización de ruptura asciende a $24810.00, representando el 98.8% del costo global del sistema.
+
+2. Análisis de Tiempos de Espera y Líneas de Espera:
+   - Tiempo medio en cola (Wq): 2.172 s frente a un tiempo total en sistema (W) de 2.319 s.
+   - El número medio de paquetes esperando en buffers (Lq) es de 52.23, lo cual indica que aproximadamente el 93.7% de los paquetes en la red se encuentran retenidos.
+   - Little's Law Check: La relación entre L y W es consistente con la tasa de llegada efectiva procesada.
+
+3. Evaluación del Modelo de Costos de Inventario:
+   - Costo de almacenamiento en RAM/Buffer: $306.26 (Holding Cost ponderado por Lq y tiempo).
+   - Costo global consolidado del sistema: $25116.26.
+   - Trade-off observado: El costo dominante es la penalización por ruptura (Buffer Overflow).
+
+RECOMENDACIONES DE OPTIMIZACIÓN (3 ACCIONES CONCRETAS):
+1. Dimensionamiento Óptimo del Buffer y Política de Control de Flujo (s, Q):
+   - Incrementar dinámicamente la capacidad del buffer (S) en los routers de ingreso de 50 a 70 paquetes para amortiguar picos de Poisson.
+   - Ajustar el umbral de reorden s a 15 y el lote Q a 20 para emitir señales de control de flujo antes de que la saturación supere el 75%.
+
+2. Balanceo Adaptativo de Carga con Algoritmo Húngaro:
+   - Elevar el factor de ponderación alpha en la matriz de costos de asignación para penalizar más enérgicamente a los routers con saturación > 60%,
+     forzando la derivación temprana hacia enlaces secundarios o alternativos antes de alcanzar el estado de desbordamiento.
+
+3. Escalado de Capacidad de Procesamiento en Enlaces Críticos (μ):
+   - Incrementar la tasa de servicio μ en un 15-20% en los enlaces centrales (R_CORE_2) mediante agregación de enlaces (LACP) o balanceo multiruta (ECMP),
+     reduciendo Wq a menos de 0.08 s y minimizando el Holding Cost acumulado.
+==================================================
