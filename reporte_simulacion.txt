@@ -1,41 +1,60 @@
 ==================================================
            REPORTE DE SIMULACIÓN DE RED           
 ==================================================
-Tiempo Total de Simulación: 117.3 s
-Tasa de Llegada (lambda): 5.0 paquetes/s
+Tiempo Total de Simulación: 120.0 s
+Tasa de Llegada (lambda): 30.0 paquetes/s
 Tasa de Servicio (mu): 18.0 paquetes/s
 Capacidad de Buffer (S): 50 paquetes
 Umbral Reabastecimiento (s): 10 paquetes
 --------------------------------------------------
 METRICAS OBTENIDAS:
-Paquetes Procesados: 2820
-Paquetes Perdidos (Overflow): 2481
-Tasa de Pérdida: 46.79%
-Tiempo Medio en Cola (Wq): 2.17 s
-Promedio Paquetes en Sistema (L): 55.75
-Costo Total de Almacenamiento: $306.26
-Costo Total de Penalización (Ruptura): $24810.00
+Paquetes Procesados: 3516
+Paquetes Perdidos (Overflow): 0
+Tasa de Pérdida: 3.20%
+Tiempo Medio en Cola (Wq): 0.54 s
+Promedio Paquetes en Sistema (L): 24.31
+Costo Total de Almacenamiento: $95.51
+Costo Total de Penalización (Ruptura): $1170.00
 --------------------------------------------------
-Costo Global del Sistema: $25116.26
+Costo Global del Sistema: $1265.51
+==================================================
+--------------------------------------------------
+DETALLE COMPLEMENTARIO DE LA CORRIDA:
+Lambda se mantuvo constante durante toda la corrida.
+Lote de Reabastecimiento (Q): 15 paquetes
+Señales de Control de Flujo (s, Q) emitidas: 569
+Paquetes Bloqueados por Control de Flujo: 117
+Paquetes Generados (tráfico ofrecido): 3657
+Promedio Paquetes en Cola (Lq): 15.91
+Tiempo Medio Total en Red (W): 0.822 s
+Paquetes Perdidos en Tránsito por Caída de Enlace: 0
+Entregas en egress alterno (balanceo bajo falla): 0
+Nota: con S = 50, s = 10 y Q = 15, la ocupación máxima alcanzable de un buffer es s + Q = 25 < S, de modo que el control de flujo evita por construcción el desbordamiento: la pérdida se materializa como rechazo controlado en la admisión y no como Buffer Overflow.
+Los paquetes bloqueados se contabilizan como tráfico perdido (el modelo no reintenta el envío) y penalizan el costo de ruptura igual que un desbordamiento.
 ==================================================
 
 ==================================================
         DIAGNÓSTICO AUTOMATIZADO VÍA API          
 ==================================================
 ANÁLISIS DE RENDIMIENTO Y CONCLUSIONES CUANTITATIVAS:
-1. Evaluación de Pérdida de Paquetes: CRÍTICO (Severa saturación por desbordamiento de buffer, penalizaciones de costo excesivas).
-   - Se registraron 2481 paquetes descartados por desbordamiento de buffer (tasa de pérdida: 46.79%).
-   - El costo por penalización de ruptura asciende a $24810.00, representando el 98.8% del costo global del sistema.
+1. Evaluación de Pérdida de Paquetes: ACEPTABLE (Pérdida moderada dentro de umbrales tolerables para redes IP con QoS estándar).
+   - Tasa de pérdida total: 3.20% del tráfico ofrecido.
+   - Desglose por causa: 0 paquetes descartados por desbordamiento de buffer (0.00%), 117 rechazados por la política de control de flujo (s, Q) antes de llegar al desbordamiento y 0 perdidos en tránsito por caída de enlace.
+   - El costo por penalización de ruptura asciende a $1170.00, representando el 92.5% del costo global del sistema.
 
 2. Análisis de Tiempos de Espera y Líneas de Espera:
-   - Tiempo medio en cola (Wq): 2.172 s frente a un tiempo total en sistema (W) de 2.319 s.
-   - El número medio de paquetes esperando en buffers (Lq) es de 52.23, lo cual indica que aproximadamente el 93.7% de los paquetes en la red se encuentran retenidos.
+   - Tiempo medio en cola (Wq): 0.537 s frente a un tiempo total en sistema (W) de 0.822 s.
+   - El número medio de paquetes esperando en buffers (Lq) es de 15.91, lo cual indica que aproximadamente el 65.5% de los paquetes en la red se encuentran retenidos.
    - Little's Law Check: La relación entre L y W es consistente con la tasa de llegada efectiva procesada.
 
-3. Evaluación del Modelo de Costos de Inventario:
-   - Costo de almacenamiento en RAM/Buffer: $306.26 (Holding Cost ponderado por Lq y tiempo).
-   - Costo global consolidado del sistema: $25116.26.
-   - Trade-off observado: El costo dominante es la penalización por ruptura (Buffer Overflow).
+3. Control de Flujo (s, Q) y Enrutamiento:
+   - Se autorizaron 569 lotes Q mediante señales de control de flujo; cada admisión consume saldo del lote vigente y el canal se cierra cuando se agota con la cola por encima de s.
+   - Entregas en un egress distinto al destino asignado (desvíos de emergencia por falla de enlace): 0.
+
+4. Evaluación del Modelo de Costos de Inventario:
+   - Costo de almacenamiento en RAM/Buffer: $95.51 (Holding Cost ponderado por Lq y tiempo).
+   - Costo global consolidado del sistema: $1265.51.
+   - Trade-off observado: El costo dominante es la penalización por ruptura (paquetes perdidos por overflow o rechazo del control de flujo).
 
 RECOMENDACIONES DE OPTIMIZACIÓN (3 ACCIONES CONCRETAS):
 1. Dimensionamiento Óptimo del Buffer y Política de Control de Flujo (s, Q):

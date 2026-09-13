@@ -8,6 +8,14 @@ import threading
 from typing import Dict, Any, List, Optional
 from queue import Queue
 
+from ..config import (
+    DEFAULT_BUFFER_CAPACITY_S,
+    DEFAULT_REORDER_POINT_S,
+    DEFAULT_ORDER_BATCH_Q,
+    ALPHA_SATURATION_WEIGHT,
+    HUNGARIAN_INTERVAL
+)
+
 
 class SimulationBridge:
     """
@@ -50,6 +58,26 @@ class SimulationBridge:
             "links": [],
             "packets": [],
             "recent_events": [],
+            "params": {
+                "capacity_S": DEFAULT_BUFFER_CAPACITY_S,
+                "threshold_s": DEFAULT_REORDER_POINT_S,
+                "batch_Q": DEFAULT_ORDER_BATCH_Q,
+                "alpha": ALPHA_SATURATION_WEIGHT,
+                "hungarian_interval": HUNGARIAN_INTERVAL,
+            },
+            "flow_control": {
+                "flow_control_signals": 0,
+                "batches_granted": 0,
+                "flow_control_blocks": 0,
+            },
+            "lambda_profile": {
+                "lambda_mean": initial_lambda,
+                "lambda_initial": initial_lambda,
+                "lambda_final": initial_lambda,
+                "lambda_min": initial_lambda,
+                "lambda_max": initial_lambda,
+                "lambda_varied": False,
+            },
         }
 
     # ====================================================

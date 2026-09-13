@@ -11,9 +11,11 @@ from typing import Optional, Tuple, List
 class PacketStatus(Enum):
     CREATED = "CREATED"
     QUEUED = "QUEUED"
+    IN_SERVICE = "IN_SERVICE"
     IN_TRANSIT = "IN_TRANSIT"
     COMPLETED = "COMPLETED"
     DROPPED = "DROPPED"
+    BLOCKED = "BLOCKED"
 
 
 class Packet:
@@ -46,6 +48,16 @@ class Packet:
         self.current_link_id: Optional[str] = None
         self.path_history: List[str] = [source_id]
 
+        # Asignación vigente calculada por el Algoritmo Húngaro.
+        # Solo es válida hasta assignment_expiry: pasado ese instante la foto de
+        # saturación con la que se resolvió la matriz ya no representa a la red.
+        self.assigned_link_id: Optional[str] = None
+        self.assignment_expiry: float = -1.0
+
+        # Trazabilidad de fin de vida del paquete
+        self.drop_reason: Optional[str] = None
+        self.delivered_to_id: Optional[str] = None
+
         # Atributos para animación visual (LERP en Pygame)
         self.transit_start_time: float = 0.0
         self.transit_duration: float = 0.1
@@ -62,10 +74,18 @@ class Packet:
             self.path_history.append(node_id)
 
     def exit_queue(self, now: float) -> float:
-        """Registra la salida de la cola hacia servicio o enlace y acumula Wq."""
+        """
+        Registra la salida de la cola en el instante en que COMIENZA el servicio
+        y acumula Wq (espera en cola, sin incluir el tiempo de servicio 1/mu).
+        """
         wait = max(0.0, now - self.current_queue_enter_time)
         self.total_queue_wait_time += wait
+        self.status = PacketStatus.IN_SERVICE
         return wait
+
+    def add_service_time(self, duration: float) -> None:
+        """Acumula el tiempo de servicio exponencial consumido en un nodo."""
+        self.total_service_time += max(0.0, duration)
 
     def start_transit(
         self,
@@ -98,16 +118,37 @@ class Packet:
         y = self.start_pos[1] + (self.end_pos[1] - self.start_pos[1]) * self.visual_progress
         return (x, y)
 
-    def mark_completed(self, now: float) -> None:
-        """Marca el paquete como entregado exitosamente."""
+    def mark_completed(self, now: float, egress_id: Optional[str] = None) -> None:
+        """Marca el paquete como entregado exitosamente en un nodo de salida."""
         self.status = PacketStatus.COMPLETED
         self.completion_time = now
+        self.delivered_to_id = egress_id
         self.visual_progress = 1.0
+
+    @property
+    def was_misrouted(self) -> bool:
+        """True si el paquete se entregó en un egress distinto al destino asignado."""
+        return (
+            self.delivered_to_id is not None
+            and self.delivered_to_id != self.destination_id
+        )
 
     def mark_dropped(self, now: float, reason: str = "BUFFER_OVERFLOW") -> None:
         """Marca el paquete como descartado por desbordamiento."""
         self.status = PacketStatus.DROPPED
         self.drop_time = now
+        self.drop_reason = reason
+        self.visual_progress = 1.0
+
+    def mark_blocked(self, now: float) -> None:
+        """
+        Marca el paquete como rechazado por la política de control de flujo (s, Q):
+        el nodo agotó el lote Q autorizado y su ocupación sigue por encima del
+        umbral s, por lo que no libera el canal de entrada.
+        """
+        self.status = PacketStatus.BLOCKED
+        self.drop_time = now
+        self.drop_reason = "FLOW_CONTROL"
         self.visual_progress = 1.0
 
     @property

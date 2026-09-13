@@ -27,7 +27,10 @@ class MetricsTracker:
         # Contadores de paquetes
         self.total_generated: int = 0
         self.total_processed: int = 0
-        self.total_dropped: int = 0
+        self.total_dropped: int = 0          # Pérdidas por desbordamiento de buffer
+        self.total_blocked: int = 0          # Rechazos por control de flujo (s, Q)
+        self.total_link_failures: int = 0    # Perdidos en tránsito por caída del enlace
+        self.total_misrouted: int = 0        # Entregados en un egress distinto al destino
 
         # Tiempos acumulados para discretos W y Wq
         self.sum_queue_wait_time: float = 0.0
@@ -67,11 +70,14 @@ class MetricsTracker:
         self,
         now: float,
         total_wait_time: float,
-        total_system_time: float
+        total_system_time: float,
+        misrouted: bool = False
     ) -> None:
         """Registra la entrega exitosa de un paquete en el nodo destino."""
         self.update_integrals(now)
         self.total_processed += 1
+        if misrouted:
+            self.total_misrouted += 1
         if self.current_packets_in_system > 0:
             self.current_packets_in_system -= 1
 
@@ -86,6 +92,32 @@ class MetricsTracker:
             self.current_packets_in_system -= 1
 
         # Suma penalización monetaria de ruptura fija
+        self.accumulated_shortage_cost += self.shortage_cost_penalty
+
+    def record_packet_lost_in_transit(self, now: float) -> None:
+        """
+        Registra un paquete perdido porque el enlace por el que viajaba se cayó.
+        No es un desbordamiento de buffer: se contabiliza aparte para no contaminar
+        la métrica de Overflow del reporte, pero también penaliza como ruptura.
+        """
+        self.update_integrals(now)
+        self.total_link_failures += 1
+        if self.current_packets_in_system > 0:
+            self.current_packets_in_system -= 1
+
+        self.accumulated_shortage_cost += self.shortage_cost_penalty
+
+    def record_packet_blocked(self, now: float) -> None:
+        """
+        Registra un paquete rechazado por la política de control de flujo (s, Q):
+        el nodo mantiene cerrado su canal de entrada porque agotó el lote Q vigente.
+        También es tráfico perdido, por lo que acumula penalización de ruptura.
+        """
+        self.update_integrals(now)
+        self.total_blocked += 1
+        if self.current_packets_in_system > 0:
+            self.current_packets_in_system -= 1
+
         self.accumulated_shortage_cost += self.shortage_cost_penalty
 
     def update_integrals(self, now: float) -> None:
@@ -125,12 +157,16 @@ class MetricsTracker:
             w_q = 0.0
             w = 0.0
 
-        # Tasa de pérdida porcentual
-        total_admitted_or_attempted = self.total_generated
-        if total_admitted_or_attempted > 0:
-            loss_rate_pct = (self.total_dropped / total_admitted_or_attempted) * 100.0
+        # Tasa de pérdida porcentual sobre el total de tráfico ofrecido.
+        # Incluye ambas causas de pérdida: desbordamiento y bloqueo por control de flujo.
+        total_lost = self.total_dropped + self.total_blocked + self.total_link_failures
+        total_offered = self.total_generated
+        if total_offered > 0:
+            loss_rate_pct = (total_lost / total_offered) * 100.0
+            overflow_rate_pct = (self.total_dropped / total_offered) * 100.0
         else:
             loss_rate_pct = 0.0
+            overflow_rate_pct = 0.0
 
         # Costos consolidados
         holding_cost = self.accumulated_holding_cost
@@ -142,7 +178,12 @@ class MetricsTracker:
             "total_generated": self.total_generated,
             "total_processed": self.total_processed,
             "total_dropped": self.total_dropped,
+            "total_blocked": self.total_blocked,
+            "total_link_failures": self.total_link_failures,
+            "total_lost": total_lost,
+            "total_misrouted": self.total_misrouted,
             "loss_rate_pct": loss_rate_pct,
+            "overflow_rate_pct": overflow_rate_pct,
             "L_q": l_q,
             "L": l,
             "W_q": w_q,

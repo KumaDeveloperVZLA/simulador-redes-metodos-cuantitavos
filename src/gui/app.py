@@ -18,7 +18,8 @@ from ..config import (
     DEFAULT_LAMBDA,
     DEFAULT_MU,
     DEFAULT_BUFFER_CAPACITY_S,
-    DEFAULT_REORDER_POINT_S
+    DEFAULT_REORDER_POINT_S,
+    DEFAULT_ORDER_BATCH_Q
 )
 from ..simulation.bridge import SimulationBridge
 from ..simulation.engine import NetworkSimulationEngine
@@ -200,19 +201,34 @@ class NetworkSimulatorApp:
 
         final_metrics = self.engine.stop()
         final_time = final_metrics.get("simulation_time", 0.0)
-        final_lambda = self.bridge.get_snapshot().get("lambda", DEFAULT_LAMBDA)
-        final_mu = self.bridge.get_snapshot().get("mu", DEFAULT_MU)
+
+        # Lambda y mu que REALMENTE rigieron la corrida: si el usuario los ajustó con
+        # el teclado durante la sesión, el último valor del puente no describe la
+        # simulación y dejaría el reporte internamente contradictorio.
+        profile = final_metrics.get("lambda_profile", {})
+        flow_summary = final_metrics.get("flow_control", {})
+        effective_lambda = profile.get("lambda_mean", DEFAULT_LAMBDA)
+        effective_mu = profile.get("mu_mean", DEFAULT_MU)
+
+        if profile.get("lambda_varied"):
+            print(
+                f"[APP] Lambda varió durante la corrida "
+                f"({profile.get('lambda_initial', 0.0):.1f} -> {profile.get('lambda_final', 0.0):.1f} pkt/s). "
+                f"Se reporta la media ponderada en el tiempo: {effective_lambda:.2f} pkt/s."
+            )
 
         # 1. Exportar reporte TXT estricto
         print(f"[APP] Exportando reporte a: {self.output_report_path}")
         report_text = export_simulation_report(
             filepath=self.output_report_path,
             sim_time=final_time,
-            lambda_val=final_lambda,
-            mu_val=final_mu,
-            capacity_S=DEFAULT_BUFFER_CAPACITY_S,
-            threshold_s=DEFAULT_REORDER_POINT_S,
-            metrics=final_metrics
+            lambda_val=effective_lambda,
+            mu_val=effective_mu,
+            capacity_S=flow_summary.get("capacity_S", DEFAULT_BUFFER_CAPACITY_S),
+            threshold_s=flow_summary.get("threshold_s", DEFAULT_REORDER_POINT_S),
+            metrics=final_metrics,
+            batch_Q=flow_summary.get("batch_Q", DEFAULT_ORDER_BATCH_Q),
+            lambda_profile=profile
         )
 
         # 2. Llamada HTTP a la API Externa para análisis automatizado
@@ -229,10 +245,11 @@ class NetworkSimulatorApp:
             docx_path=self.output_docx_path,
             metrics=final_metrics,
             sim_time=final_time,
-            lambda_val=final_lambda,
-            mu_val=final_mu,
+            lambda_val=effective_lambda,
+            mu_val=effective_mu,
             api_analysis=api_response,
-            screenshot_image_path=self.screenshot_path
+            screenshot_image_path=self.screenshot_path,
+            lambda_profile=profile
         )
 
         pygame.quit()

@@ -30,7 +30,12 @@ def _generate_expert_quantitative_analysis(report_content: str, metrics: Dict[st
     w = metrics.get("W", 0.0)
     n_proc = metrics.get("total_processed", 0)
     n_loss = metrics.get("total_dropped", 0)
+    n_blocked = metrics.get("total_blocked", 0)
     loss_pct = metrics.get("loss_rate_pct", 0.0)
+    overflow_pct = metrics.get("overflow_rate_pct", loss_pct)
+    n_misrouted = metrics.get("total_misrouted", 0)
+    n_link_fail = metrics.get("total_link_failures", 0)
+    flow = metrics.get("flow_control", {}) or {}
     c_hold = metrics.get("holding_cost", 0.0)
     c_short = metrics.get("shortage_cost", 0.0)
     c_global = metrics.get("global_cost", 0.0)
@@ -41,7 +46,7 @@ def _generate_expert_quantitative_analysis(report_content: str, metrics: Dict[st
     elif loss_pct <= 5.0:
         loss_eval = "ACEPTABLE (Pérdida moderada dentro de umbrales tolerables para redes IP con QoS estándar)."
     else:
-        loss_eval = "CRÍTICO (Severa saturación por desbordamiento de buffer, penalizaciones de costo excesivas)."
+        loss_eval = "CRÍTICO (Saturación severa: desbordamiento y/o cierre sostenido del canal por control de flujo, con penalizaciones de costo excesivas)."
 
     traffic_ratio = (lq / (l + 0.001)) * 100.0
 
@@ -51,7 +56,10 @@ def _generate_expert_quantitative_analysis(report_content: str, metrics: Dict[st
         "==================================================",
         "ANÁLISIS DE RENDIMIENTO Y CONCLUSIONES CUANTITATIVAS:",
         f"1. Evaluación de Pérdida de Paquetes: {loss_eval}",
-        f"   - Se registraron {n_loss} paquetes descartados por desbordamiento de buffer (tasa de pérdida: {loss_pct:.2f}%).",
+        f"   - Tasa de pérdida total: {loss_pct:.2f}% del tráfico ofrecido.",
+        f"   - Desglose por causa: {n_loss} paquetes descartados por desbordamiento de buffer ({overflow_pct:.2f}%), "
+        f"{n_blocked} rechazados por la política de control de flujo (s, Q) antes de llegar al desbordamiento y "
+        f"{n_link_fail} perdidos en tránsito por caída de enlace.",
         f"   - El costo por penalización de ruptura asciende a ${c_short:.2f}, representando el {(c_short / (c_global + 0.001) * 100):.1f}% del costo global del sistema.",
         "",
         f"2. Análisis de Tiempos de Espera y Líneas de Espera:",
@@ -59,10 +67,15 @@ def _generate_expert_quantitative_analysis(report_content: str, metrics: Dict[st
         f"   - El número medio de paquetes esperando en buffers (Lq) es de {lq:.2f}, lo cual indica que aproximadamente el {traffic_ratio:.1f}% de los paquetes en la red se encuentran retenidos.",
         f"   - Little's Law Check: La relación entre L y W es consistente con la tasa de llegada efectiva procesada.",
         "",
-        f"3. Evaluación del Modelo de Costos de Inventario:",
+        f"3. Control de Flujo (s, Q) y Enrutamiento:",
+        f"   - Se autorizaron {flow.get('batches_granted', 0)} lotes Q mediante señales de control de flujo; "
+        f"cada admisión consume saldo del lote vigente y el canal se cierra cuando se agota con la cola por encima de s.",
+        f"   - Entregas en un egress distinto al destino asignado (desvíos de emergencia por falla de enlace): {n_misrouted}.",
+        "",
+        f"4. Evaluación del Modelo de Costos de Inventario:",
         f"   - Costo de almacenamiento en RAM/Buffer: ${c_hold:.2f} (Holding Cost ponderado por Lq y tiempo).",
         f"   - Costo global consolidado del sistema: ${c_global:.2f}.",
-        f"   - Trade-off observado: El costo dominante es {'la penalización por ruptura (Buffer Overflow)' if c_short > c_hold else 'el costo de retención en memoria (Holding Cost)'}.",
+        f"   - Trade-off observado: El costo dominante es {'la penalización por ruptura (paquetes perdidos por overflow o rechazo del control de flujo)' if c_short > c_hold else 'el costo de retención en memoria (Holding Cost)'}.",
         "",
         "RECOMENDACIONES DE OPTIMIZACIÓN (3 ACCIONES CONCRETAS):",
         "1. Dimensionamiento Óptimo del Buffer y Política de Control de Flujo (s, Q):",

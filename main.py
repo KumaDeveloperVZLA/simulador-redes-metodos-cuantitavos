@@ -34,6 +34,7 @@ from src.config import (
     DEFAULT_MU,
     DEFAULT_BUFFER_CAPACITY_S,
     DEFAULT_REORDER_POINT_S,
+    DEFAULT_ORDER_BATCH_Q,
     SCREEN_WIDTH,
     SCREEN_HEIGHT,
     CANVAS_WIDTH
@@ -86,22 +87,39 @@ def run_headless_simulation(
         if sim_time >= duration:
             break
 
+        # Si el motor abortó por fallos repetidos, el reloj de simulación deja de
+        # avanzar: hay que salir con lo recolectado en vez de esperar indefinidamente.
+        if not engine.is_running:
+            print(
+                f"[SIM] El motor se detuvo antes de completar la corrida "
+                f"(T = {sim_time:.1f}s de {duration:.1f}s). Se reportará lo recolectado."
+            )
+            break
+
         time.sleep(0.1)
 
     print("\n[SIM] Finalizando motor de simulación y recolectando métricas...")
     final_metrics = engine.stop()
     final_time = final_metrics.get("simulation_time", duration)
 
+    # Parámetros efectivos de la corrida (media ponderada en el tiempo)
+    profile = final_metrics.get("lambda_profile", {})
+    flow_summary = final_metrics.get("flow_control", {})
+    effective_lambda = profile.get("lambda_mean", lambd)
+    effective_mu = profile.get("mu_mean", mu)
+
     # 1. Exportar reporte TXT
     print(f"[REPORTE] Guardando reporte formal en: {report_path}")
     report_text = export_simulation_report(
         filepath=report_path,
         sim_time=final_time,
-        lambda_val=lambd,
-        mu_val=mu,
-        capacity_S=DEFAULT_BUFFER_CAPACITY_S,
-        threshold_s=DEFAULT_REORDER_POINT_S,
-        metrics=final_metrics
+        lambda_val=effective_lambda,
+        mu_val=effective_mu,
+        capacity_S=flow_summary.get("capacity_S", DEFAULT_BUFFER_CAPACITY_S),
+        threshold_s=flow_summary.get("threshold_s", DEFAULT_REORDER_POINT_S),
+        metrics=final_metrics,
+        batch_Q=flow_summary.get("batch_Q", DEFAULT_ORDER_BATCH_Q),
+        lambda_profile=profile
     )
 
     # 2. Análisis vía API HTTP
@@ -122,10 +140,11 @@ def run_headless_simulation(
         docx_path=docx_path,
         metrics=final_metrics,
         sim_time=final_time,
-        lambda_val=lambd,
-        mu_val=mu,
+        lambda_val=effective_lambda,
+        mu_val=effective_mu,
         api_analysis=api_diag,
-        screenshot_image_path=screenshot_path
+        screenshot_image_path=screenshot_path,
+        lambda_profile=profile
     )
 
     print("\n=======================================================")

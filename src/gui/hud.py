@@ -12,6 +12,9 @@ from ..config import (
     SCREEN_HEIGHT,
     SIDEBAR_WIDTH,
     CANVAS_WIDTH,
+    DEFAULT_BUFFER_CAPACITY_S,
+    DEFAULT_REORDER_POINT_S,
+    DEFAULT_ORDER_BATCH_Q,
     COLOR_PANEL_BG,
     COLOR_PANEL_BORDER,
     COLOR_PANEL_HEADER,
@@ -28,6 +31,11 @@ from ..config import (
     COLOR_BTN_BORDER,
     COLOR_BTN_TEXT
 )
+
+
+# Valores de respaldo solo para el primer frame, antes del primer snapshot del motor
+DEFAULT_LAMBDA_FALLBACK = 15.0
+DEFAULT_MU_FALLBACK = 18.0
 
 
 class SimulationHUD:
@@ -66,8 +74,17 @@ class SimulationHUD:
         metrics = snapshot.get("metrics", {})
         sim_time = snapshot.get("sim_time", 0.0)
         is_paused = snapshot.get("is_paused", False)
-        current_lambda = snapshot.get("lambda", 15.0)
-        current_mu = snapshot.get("mu", 18.0)
+        current_lambda = snapshot.get("lambda", DEFAULT_LAMBDA_FALLBACK)
+        current_mu = snapshot.get("mu", DEFAULT_MU_FALLBACK)
+
+        # Parámetros reales de la corrida: nunca se rotulan a mano, se leen del
+        # snapshot (y en su defecto de config) para que el panel no mienta si cambian.
+        params = snapshot.get("params", {})
+        capacity_S = params.get("capacity_S", DEFAULT_BUFFER_CAPACITY_S)
+        threshold_s = params.get("threshold_s", DEFAULT_REORDER_POINT_S)
+        batch_Q = params.get("batch_Q", DEFAULT_ORDER_BATCH_Q)
+        flow_ctrl = snapshot.get("flow_control", {})
+        lambda_profile = snapshot.get("lambda_profile", {})
 
         cur_y = 16
 
@@ -120,13 +137,24 @@ class SimulationHUD:
         self._draw_mini_btn(btn_plus, "+", mouse_pos)
         cur_y += 26
 
+        lam_mean = lambda_profile.get("lambda_mean", current_lambda)
+        if lambda_profile.get("lambda_varied"):
+            self._draw_key_value("λ medio ponderado:", f"{lam_mean:.2f} pkt/s", cur_y)
+            cur_y += 20
+
         self._draw_key_value("Tasa Servicio (μ):", f"{current_mu:.1f} pkt/s", cur_y)
         cur_y += 20
-        self._draw_key_value("Capacidad Buffer (S):", "50 paquetes", cur_y)
+        self._draw_key_value("Capacidad Buffer (S):", f"{capacity_S} paquetes", cur_y)
         cur_y += 20
-        self._draw_key_value("Umbral Reabast. (s):", "10 paquetes", cur_y)
+        self._draw_key_value("Umbral Reabast. (s):", f"{threshold_s} paquetes", cur_y)
         cur_y += 20
-        self._draw_key_value("Lote de Control (Q):", "15 paquetes", cur_y)
+        self._draw_key_value("Lote de Control (Q):", f"{batch_Q} paquetes", cur_y)
+        cur_y += 20
+        self._draw_key_value(
+            "Lotes Q autorizados:",
+            f"{flow_ctrl.get('batches_granted', 0)}",
+            cur_y
+        )
         cur_y += 28
 
         # ----------------------------------------------------
@@ -155,9 +183,18 @@ class SimulationHUD:
 
         loss_color = COLOR_NODE_DANGER if loss_pct > 5.0 else COLOR_TEXT_PRIMARY
         self._draw_metric_row(
-            "Paquetes Perdidos:",
-            f"{n_loss} ({loss_pct:.2f}%)",
+            "Perdidos (Overflow):",
+            f"{n_loss} ({loss_pct:.2f}% total)",
             loss_color,
+            cur_y
+        )
+        cur_y += 20
+
+        n_blocked = metrics.get("total_blocked", 0)
+        self._draw_metric_row(
+            "Bloqueados (Control s,Q):",
+            f"{n_blocked}",
+            COLOR_NODE_WARNING if n_blocked else COLOR_TEXT_PRIMARY,
             cur_y
         )
         cur_y += 28

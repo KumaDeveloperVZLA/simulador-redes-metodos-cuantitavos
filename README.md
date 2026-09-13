@@ -76,6 +76,67 @@ python -m unittest tests/test_simulation.py
 
 ---
 
+## 🧮 Decisiones de Modelado (supuestos explícitos)
+
+Estas son las convenciones que gobiernan los números del reporte. Conviene citarlas en la
+defensa del informe, porque determinan cómo deben leerse las métricas.
+
+### Separación entre espera en cola y servicio
+El paquete **abandona el buffer en el instante en que comienza su servicio**, no cuando
+termina. Por lo tanto:
+- $W_q$ mide únicamente la espera en cola y $L_q$ cuenta solo a los paquetes que esperan.
+- El tiempo de servicio exponencial se acumula aparte (`Packet.total_service_time`), de modo
+  que se preserva la relación $W = W_q + 1/\mu + \text{latencia de tránsito}$ por salto.
+- Los valores reportados de $W_q$ y $W$ son **acumulados sobre todos los saltos** del paquete
+  (ingreso + núcleo), no por nodo: por eso son aproximadamente el doble del $W_q$ que predice
+  un M/M/1 aislado con la misma $\rho$.
+
+### Enrutamiento orientado al destino
+Cada paquete nace con un `destination_id` y **ese destino gobierna la ruta**: en cada salto
+solo se consideran los enlaces operativos desde los cuales el nodo destino sigue siendo
+alcanzable (la tabla de alcanzabilidad se recalcula ante cada caída o restauración de enlace).
+Entre los enlaces válidos se elige el de menor costo $C_{ij}$, de manera que el balanceo de
+carga opera **dentro** del conjunto de rutas correctas.
+
+Si una falla de enlaces deja al paquete sin ninguna ruta hacia su destino, se permite un
+desvío de emergencia por cualquier enlace operativo; esas entregas se contabilizan aparte
+como *entregas en egress alterno* y se informan en el reporte.
+
+### Política $(s, Q)$ con lotes efectivos
+El lote $Q$ **se consume realmente**, no es una bandera informativa:
+- Cada admisión en un buffer descuenta una unidad del lote vigente.
+- Cuando la ocupación baja hasta el umbral $s$ y el lote se agotó, el nodo emite la señal de
+  control de flujo y autoriza un lote nuevo de $Q$ paquetes (libera su canal de entrada).
+- Mientras el lote esté agotado y la ocupación siga por encima de $s$, el canal permanece
+  cerrado: el nodo **rechaza** nuevas llegadas y ejerce contrapresión (*backpressure*) sobre
+  sus vecinos, que retienen el paquete en su propio buffer en lugar de reenviarlo.
+
+Consecuencia cuantitativa: la ocupación de un buffer nunca supera $s + Q$. Con la
+configuración por defecto ($S = 50$, $s = 10$, $Q = 15$) resulta $s + Q = 25 < S$, así que el
+control de flujo **previene por construcción el desbordamiento** y la pérdida se materializa
+como rechazo controlado en la admisión. Los paquetes rechazados se contabilizan como tráfico
+perdido (el modelo no reintenta el envío) y penalizan el costo de ruptura igual que un
+*overflow*. Para observar desbordamientos reales basta configurar $S < s + Q$ en `src/config.py`.
+
+### Algoritmo Húngaro
+Cada $\Delta t$ (`HUNGARIAN_INTERVAL`, 0.1 s, del orden del tiempo de servicio $1/\mu$) se
+plantea **un único problema global**: los $N$ paquetes que están en cabeza de cola en todos los
+routers -uno por cada enlace de salida operativo, que son los únicos que el nodo alcanza a
+despachar dentro de $\Delta t$- frente a los $M$ enlaces operativos de toda la topología.
+Los pares no admisibles (enlace que no nace del nodo donde espera el paquete, ruta que no
+conduce al destino, o vecino con el canal cerrado) reciben el costo ficticio y quedan fuera
+de la solución. Cada asignación **caduca al vencer $\Delta t$**; pasada esa ventana el nodo
+decide por costo mínimo, porque la fotografía de saturación que resolvió la matriz ya no
+describe la red.
+
+### Reporte de $\lambda$
+$\lambda$ y $\mu$ pueden ajustarse en caliente durante la sesión gráfica. El reporte publica
+la **media ponderada en el tiempo** de la corrida -no el último valor tecleado- y deja
+constancia del recorrido (inicial → final y rango) en el bloque complementario, de modo que
+el archivo entregado nunca sea internamente contradictorio.
+
+---
+
 ## 📂 Estructura del Proyecto
 
 ```

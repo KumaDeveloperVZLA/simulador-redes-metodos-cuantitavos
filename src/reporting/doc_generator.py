@@ -13,6 +13,14 @@ from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
 from docx.oxml import parse_xml, OxmlElement
 from docx.oxml.ns import nsdecls, qn
 
+from ..config import (
+    DEFAULT_BUFFER_CAPACITY_S,
+    DEFAULT_REORDER_POINT_S,
+    DEFAULT_ORDER_BATCH_Q,
+    HUNGARIAN_INTERVAL,
+    ALPHA_SATURATION_WEIGHT
+)
+
 
 def _set_cell_background(cell, hex_color: str) -> None:
     """Aplica color de fondo a una celda de tabla en Word."""
@@ -42,7 +50,8 @@ def generate_technical_docx_report(
     lambda_val: float,
     mu_val: float,
     api_analysis: str,
-    screenshot_image_path: Optional[str] = None
+    screenshot_image_path: Optional[str] = None,
+    lambda_profile: Optional[Dict[str, Any]] = None
 ) -> None:
     """
     Construye un documento formal Word (.docx) con diseño editorial universitario de excelencia.
@@ -198,13 +207,17 @@ def generate_technical_docx_report(
 
     doc.add_paragraph(
         "• Política de Reabastecimiento / Control de Flujo (s, Q): El nodo monitorea permanentemente su nivel de inventario (buffer). "
-        "Cuando la ocupación desciende por debajo o igual al umbral mínimo s (reorder point), se activa una bandera de control "
-        "de flujo para solicitar o habilitar la admisión de un lote de tamaño Q, impidiendo la inanición del servidor.\n\n"
+        "Cuando la ocupación desciende hasta o por debajo del umbral mínimo s (reorder point) y el lote vigente ya se consumió, "
+        "el nodo emite la señal de control de flujo y autoriza un nuevo lote de Q paquetes, es decir, libera su canal de entrada. "
+        "El lote es efectivo, no meramente indicativo: cada admisión consume una unidad del lote y, mientras el saldo esté agotado "
+        "y la ocupación siga por encima de s, el canal permanece cerrado y el nodo ejerce contrapresión (backpressure) sobre sus "
+        "vecinos aguas arriba, que retienen el paquete en su propio buffer en lugar de reenviarlo. Este mecanismo anticipa el "
+        "desbordamiento: el tráfico excedente se rechaza de forma controlada antes de que la cola alcance la capacidad S.\n\n"
         "• Modelo de Costos Dinámicos:\n"
         "  - Costo de Mantener (Holding Cost, H): Representa el costo energético, retención de memoria y latencia impuesta. "
         "Se acumula integralmente de forma continua: Costo_Almacenamiento = H · ∫[0 a T] Nq(t) dt = H · Lq · T.\n"
-        "  - Costo de Ruptura (Shortage Cost, c_s): Penalización monetaria fija asignada a cada paquete descartado por overflow: "
-        "Costo_Ruptura = N_loss · c_s.\n"
+        "  - Costo de Ruptura (Shortage Cost, c_s): Penalización monetaria fija asignada a cada paquete perdido, tanto por "
+        "desbordamiento de buffer como por rechazo del control de flujo: Costo_Ruptura = (N_loss + N_bloqueados) · c_s.\n"
         "  - Costo Global del Sistema: Función objetivo a minimizar: Costo_Global = Costo_Almacenamiento + Costo_Ruptura."
     )
 
@@ -213,9 +226,18 @@ def generate_technical_docx_report(
     h2_3.runs[0].font.color.rgb = RGBColor(30, 45, 75)
 
     doc.add_paragraph(
-        "En redes dinámicas, la asignación estática de rutas induce cuellos de botella severos. En el simulador, en intervalos "
-        "discretos Δt = 0.5 s, el sistema recolecta N paquetes pendientes de asignación en los nodos de ingreso y M enlaces "
-        "de transmisión disponibles hacia la capa de conmutación central."
+        f"En redes dinámicas, la asignación estática de rutas induce cuellos de botella severos. En el simulador, en intervalos "
+        f"discretos Δt = {HUNGARIAN_INTERVAL} s (del orden del tiempo de servicio 1/μ, para que la asignación no caduque antes "
+        f"de ser utilizada), el sistema plantea un único problema global: los N paquetes que están en cabeza de cola en todos "
+        f"los routers -los únicos que el nodo alcanza a despachar dentro de Δt- frente a los M enlaces de transmisión operativos "
+        f"de toda la topología. Cada asignación queda vigente exactamente durante Δt; vencida esa ventana el nodo vuelve a "
+        f"decidir por costo mínimo, porque la fotografía de saturación con la que se resolvió la matriz ya no describe la red."
+    )
+
+    doc.add_paragraph(
+        "Los pares paquete-enlace no admisibles (enlace que no nace del router donde espera el paquete, ruta desde la que su "
+        "nodo destino ya no es alcanzable, o vecino con el canal de entrada cerrado por la política (s, Q)) se penalizan con "
+        "el costo ficticio y quedan excluidos de la solución."
     )
 
     doc.add_paragraph(
@@ -230,7 +252,7 @@ def generate_technical_docx_report(
     p_eq3.runs[0].font.bold = True
 
     doc.add_paragraph(
-        "Donde α es un factor de ponderación calibrado (α = 5.0) que balancea el compromiso entre retardo físico y congestión. "
+        f"Donde α es un factor de ponderación calibrado (α = {ALPHA_SATURATION_WEIGHT}) que balancea el compromiso entre retardo físico y congestión. "
         "Cuando el número de flujos difiere del número de enlaces disponibles (N ≠ M), la matriz rectangular se balancea "
         "hacia una matriz cuadrada K x K (con K = max(N, M)) rellenando las celdas ficticias con un costo de penalización "
         "dummy elevado (10,000.0). Se resuelve la asignación biunívoca óptima mediante el método Kuhn-Munkres "
@@ -323,15 +345,33 @@ def generate_technical_docx_report(
         cell.paragraphs[0].runs[0].font.bold = True
         cell.paragraphs[0].runs[0].font.color.rgb = RGBColor(255, 255, 255)
 
+    # Parámetros de inventario leídos de la configuración vigente (nunca rotulados a mano)
+    flow_summary = metrics.get("flow_control", {}) or {}
+    capacity_S = flow_summary.get("capacity_S", DEFAULT_BUFFER_CAPACITY_S)
+    threshold_s = flow_summary.get("threshold_s", DEFAULT_REORDER_POINT_S)
+    batch_Q = flow_summary.get("batch_Q", DEFAULT_ORDER_BATCH_Q)
+
+    profile = lambda_profile or metrics.get("lambda_profile", {}) or {}
+    if profile.get("lambda_varied"):
+        lambda_label = (
+            f"{lambda_val:.2f} paquetes/s (media ponderada; "
+            f"{profile.get('lambda_initial', 0.0):.1f} → {profile.get('lambda_final', 0.0):.1f})"
+        )
+    else:
+        lambda_label = f"{lambda_val:.1f} paquetes/s"
+
     data_rows = [
         ("Tiempo Total de Simulación (T)", f"{sim_time:.1f} segundos"),
-        ("Tasa Media de Llegada (λ - Poisson)", f"{lambda_val:.1f} paquetes/s"),
+        ("Tasa Media de Llegada (λ - Poisson)", lambda_label),
         ("Tasa Media de Servicio (μ - Exponencial)", f"{mu_val:.1f} paquetes/s"),
-        ("Capacidad de Buffer por Router (S)", "50 paquetes"),
-        ("Umbral de Control de Flujo (s)", "10 paquetes"),
-        ("Lote de Reabastecimiento (Q)", "15 paquetes"),
+        ("Capacidad de Buffer por Router (S)", f"{capacity_S} paquetes"),
+        ("Umbral de Control de Flujo (s)", f"{threshold_s} paquetes"),
+        ("Lote de Reabastecimiento (Q)", f"{batch_Q} paquetes"),
+        ("Lotes Q Autorizados (señales s, Q)", str(flow_summary.get("batches_granted", 0))),
         ("Paquetes Procesados con Éxito (N_proc)", str(metrics.get("total_processed", 0))),
         ("Paquetes Descartados por Desbordamiento (N_loss)", str(metrics.get("total_dropped", 0))),
+        ("Paquetes Bloqueados por Control de Flujo", str(metrics.get("total_blocked", 0))),
+        ("Paquetes Perdidos por Caída de Enlace", str(metrics.get("total_link_failures", 0))),
         ("Tasa Porcentual de Pérdida de Paquetes", f"{metrics.get('loss_rate_pct', 0.0):.2f}%"),
         ("Tiempo Medio de Espera en Cola (Wq)", f"{metrics.get('W_q', 0.0):.3f} segundos"),
         ("Tiempo Medio Total en la Red (W)", f"{metrics.get('W', 0.0):.3f} segundos"),

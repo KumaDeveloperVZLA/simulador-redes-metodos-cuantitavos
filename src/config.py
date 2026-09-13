@@ -31,9 +31,16 @@ HOLDING_COST_RATE_H = 0.05      # Costo de almacenamiento por paquete por segund
 SHORTAGE_PENALTY_COST = 10.0    # Penalización monetaria fija por paquete descartado ($/pkt)
 
 # Algoritmo Húngaro (Asignación Óptima)
-HUNGARIAN_INTERVAL = 0.5        # Intervalo Delta t para ejecución del algoritmo (segundos)
+# Delta t debe ser del orden del tiempo de servicio 1/mu (~0.056 s con mu = 18):
+# con intervalos mayores la asignación caduca antes de que el nodo llegue a despachar
+# el paquete y la matriz de costos ya no refleja la saturación real de la red.
+HUNGARIAN_INTERVAL = 0.1        # Intervalo Delta t para ejecución del algoritmo (segundos)
 ALPHA_SATURATION_WEIGHT = 5.0   # Factor de ponderación alpha para saturación de buffer
 DUMMY_PENALTY_COST = 10000.0    # Penalización para balancear matriz rectangular N != M
+
+# Contrapresión: espera antes de reintentar el reenvío cuando no hay enlace útil
+# (todos caídos hacia el destino, o vecino con el canal de entrada cerrado por (s, Q))
+BACKPRESSURE_RETRY_DELAY = 0.02
 
 # ==========================================
 # PALETA DE COLORES CYBERPUNK / DARK MODE

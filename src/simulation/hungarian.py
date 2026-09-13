@@ -4,7 +4,7 @@ Optimiza el enrutamiento y balanceo de carga en intervalos discretos Delta t
 utilizando scipy.optimize.linear_sum_assignment sobre una matriz dinámica de costos.
 """
 
-from typing import List, Dict, Tuple, Any
+from typing import List, Dict, Tuple, Any, Callable, Optional
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
@@ -19,7 +19,8 @@ def solve_hungarian_assignment(
     candidate_links: List[NetworkLink],
     nodes_dict: Dict[str, RouterNode],
     alpha: float = ALPHA_SATURATION_WEIGHT,
-    dummy_penalty: float = DUMMY_PENALTY_COST
+    dummy_penalty: float = DUMMY_PENALTY_COST,
+    feasible: Optional[Callable[[Packet, NetworkLink], bool]] = None
 ) -> Tuple[List[Tuple[Packet, NetworkLink]], Dict[str, Any]]:
     """
     Resuelve la asignación 1 a 1 de paquetes pendientes a enlaces de transmisión
@@ -27,6 +28,12 @@ def solve_hungarian_assignment(
     C_ij = Latencia_Actual_ij + alpha * (Buffer_Actual_j / S_j)
 
     Si N != M, balancea la matriz a cuadrada (K x K) con costos de penalización dummy.
+
+    `feasible(paquete, enlace)` permite al motor declarar qué pares son admisibles
+    (enlace que sale del nodo donde espera el paquete, ruta válida hacia su destino,
+    vecino con el canal de entrada abierto). Los pares no admisibles conservan la
+    penalización dummy y son descartados del resultado. Un enlace caído queda
+    excluido por su propia latencia de penalización (NetworkLink.current_latency).
     """
     if not pending_packets or not candidate_links:
         return [], {"status": "EMPTY", "assigned": 0, "total_cost": 0.0}
@@ -40,11 +47,12 @@ def solve_hungarian_assignment(
 
     # Construcción de la matriz C_ij
     for i in range(n):
+        packet = pending_packets[i]
         for j in range(m):
             link = candidate_links[j]
-            if not link.is_active:
-                # Enlace caído: penalización máxima
-                balanced_cost_matrix[i, j] = dummy_penalty
+
+            # Pares no admisibles: conservan el costo dummy de la matriz balanceada
+            if feasible is not None and not feasible(packet, link):
                 continue
 
             target_node = nodes_dict.get(link.target_id)
@@ -52,7 +60,7 @@ def solve_hungarian_assignment(
 
             # C_ij = Latencia + alpha * Saturación
             cost = link.current_latency + alpha * saturation
-            balanced_cost_matrix[i, j] = cost
+            balanced_cost_matrix[i, j] = min(cost, dummy_penalty)
 
     # Ejecución del Algoritmo Húngaro (Kuhn-Munkres) vía SciPy
     row_indices, col_indices = linear_sum_assignment(balanced_cost_matrix)
@@ -61,12 +69,10 @@ def solve_hungarian_assignment(
     total_assigned_cost = 0.0
 
     for r, c in zip(row_indices, col_indices):
-        # Descartar filas o columnas ficticias (dummy) y enlaces caídos
-        if r < n and c < m:
-            link = candidate_links[c]
-            if link.is_active and balanced_cost_matrix[r, c] < (dummy_penalty / 2.0):
-                assignments.append((pending_packets[r], link))
-                total_assigned_cost += balanced_cost_matrix[r, c]
+        # Descartar filas/columnas ficticias (dummy) y pares penalizados
+        if r < n and c < m and balanced_cost_matrix[r, c] < (dummy_penalty / 2.0):
+            assignments.append((pending_packets[r], candidate_links[c]))
+            total_assigned_cost += balanced_cost_matrix[r, c]
 
     diag_info = {
         "status": "OPTIMAL",
